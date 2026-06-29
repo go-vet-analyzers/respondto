@@ -1,0 +1,68 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  COVERAGE_MIN: "100.0"
+
+jobs:
+  native:
+    name: native ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          check-latest: true
+      - run: go build ./...
+      - run: go vet ./...
+      - name: Test with ${{ env.COVERAGE_MIN }}% coverage gate
+        run: |
+          set -euo pipefail
+          for pkg in $(go list ./...); do
+            if ! ls "$(go list -f '{{.Dir}}' "$pkg")"/*_test.go >/dev/null 2>&1; then
+              echo "${pkg}: no tests — skipping"; continue
+            fi
+            go test -cover -coverprofile=cover.out "$pkg"
+            total=$(go tool cover -func=cover.out \
+              | awk '/^total:/ {print substr($3, 1, length($3)-1)}')
+            echo "${pkg} coverage: ${total}%"
+            awk -v t="$total" -v m="$COVERAGE_MIN" \
+              'BEGIN { exit (t+0 >= m+0) ? 0 : 1 }' \
+              || { echo "coverage ${total}% < ${COVERAGE_MIN}%"; exit 1; }
+          done
+
+  cross:
+    name: cross-build ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [riscv64, loong64, ppc64le, s390x]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          check-latest: true
+      # This is a go/analysis vet tool: pure Go, no arch-specific code, and its
+      # analysistest suite shells out to the Go toolchain at run time (so the
+      # tests run on the native jobs above, not under emulation). Here we prove
+      # it compiles and vets cleanly for every other 64-bit target.
+      - run: GOOS=linux GOARCH=${{ matrix.arch }} go build ./...
+      - run: GOOS=linux GOARCH=${{ matrix.arch }} go vet ./...
