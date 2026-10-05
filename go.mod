@@ -1,6 +1,6 @@
 module github.com/go-vet-analyzers/respondto
 
-go 1.26.4
+go 1.27.1
 
 require golang.org/x/tools v0.51.0
 
